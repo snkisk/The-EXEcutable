@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Grid Battle Prototype</title>
+<style>
+  html,body{margin:0;background:#101218;color:#eee;font-family:system-ui,sans-serif;height:100%;overflow:hidden}
+  body{display:flex;align-items:center;justify-content:center}
+  #wrap{width:min(1100px,100vw);padding:12px;box-sizing:border-box}
+  #top{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:8px}
+  #title{font-weight:800;letter-spacing:.08em}
+  #help{font-size:13px;opacity:.7;text-align:right}
+  canvas{display:block;width:100%;height:auto;aspect-ratio:16/9;background:#171a22;border:2px solid #3b4150;border-radius:10px;box-shadow:0 10px 40px #0008}
+  #touch{display:none;justify-content:space-between;align-items:center;margin-top:10px}
+  .dpad{display:grid;grid-template-columns:52px 52px 52px;grid-template-rows:52px 52px 52px;gap:4px}
+  button{border:1px solid #555d70;background:#272c38;color:#fff;border-radius:8px;font-size:20px}
+  .up{grid-column:2}.left{grid-row:2}.right{grid-column:3;grid-row:2}.down{grid-column:2;grid-row:3}
+  #attack{width:130px;height:108px;font-size:18px;font-weight:700}
+  #titleScreen{position:fixed;inset:0;z-index:9;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#080b14,#111a2b 50%,#05070c);overflow:hidden}
+  .titleGrid{position:absolute;inset:0;background-image:linear-gradient(#25365355 1px,transparent 1px),linear-gradient(90deg,#25365355 1px,transparent 1px);background-size:40px 40px}
+  .titleContent{position:relative;text-align:center;z-index:1}
+  .gameTitle{font:900 68px system-ui,sans-serif;letter-spacing:.03em;color:#eaf4ff;text-shadow:0 0 10px #62b8ff,0 0 28px #62b8ff}
+  .gameSub{margin-top:12px;font:700 16px system-ui,sans-serif;letter-spacing:.18em;color:#7ebcff}
+  #startButton{margin-top:55px;width:300px;height:62px;border:2px solid #6ab9ff;border-radius:10px;background:#172941;color:#fff;font:800 22px system-ui,sans-serif;cursor:pointer;box-shadow:0 0 18px #3b8bd855}
+  #startButton:hover{background:#213b5d}
+  .titleHint{margin-top:14px;font:13px system-ui,sans-serif;color:#7f8da5}
+  #customPanel{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#000b;z-index:10}
+  #customBox{width:min(760px,90vw);background:#171b24;border:2px solid #667084;border-radius:14px;padding:28px;box-shadow:0 20px 70px #000}
+  #customBox h2{margin:0 0 8px;font-size:30px}
+  #customBox p{margin:0 0 22px;color:#aeb6c8}
+  .chips{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .chip{padding:18px 8px;border:1px solid #596174;background:#242a36;color:#fff;border-radius:10px;text-align:center;cursor:pointer}
+  .chip b{display:block;font-size:17px;margin-bottom:5px}.chip b small{font-size:11px;color:#c8cfdd}.chip span{font-size:12px;color:#aeb6c8}
+  .chip:disabled{opacity:.35;cursor:not-allowed}.chip.selected{opacity:1}
+  .chip.selected{outline:3px solid #fff;background:#3a4252;transform:translateY(-3px)}
+  @media (max-width:700px){.gameTitle{font-size:42px}.gameSub{font-size:12px}#startButton{width:240px;height:56px}#help{display:none}#touch{display:flex}.chips{grid-template-columns:repeat(2,1fr)}#customBox{padding:20px}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <div id="title">GRID BATTLE — PROTOTYPE 0.1</div>
+    <div id="help">WASD / 矢印：移動　　SPACE：通常攻撃　　X：チップ　　C：CUSTOM　　R：リスタート</div>
+  </div>
+  <canvas id="game" width="960" height="540"></canvas>
+  <div id="titleScreen">
+    <div class="titleGrid"></div>
+    <div class="titleContent">
+      <div class="gameTitle">The EXEcutable</div>
+      <div class="gameSub">REALTIME GRID BATTLE</div>
+      <button id="startButton" type="button">START</button>
+      <div class="titleHint">ENTER / SPACE / CLICK</div>
+    </div>
+  </div>
+  <div id="customPanel">
+    <div id="customBox">
+      <h2>CUSTOM</h2>
+      <p>毎回ランダムな5枚が出現。1〜5キー、またはクリックで選択。最大3枚。連続選択は同じコード。* は直前のコードを引き継ぐ。</p>
+      <div class="chips" id="chipChoices"></div>
+      <div id="selectedText" style="margin-top:18px;font-weight:700">選択中：なし</div>
+      <p style="margin-top:10px;margin-bottom:0">ENTER：決定　／　最大3枚　／　同じチップが複数出れば複数選択可能</p>
+    </div>
+  </div>
+
+  <div id="touch">
+    <div class="dpad">
+      <button class="up" data-key="ArrowUp">▲</button>
+      <button class="left" data-key="ArrowLeft">◀</button>
+      <button class="right" data-key="ArrowRight">▶</button>
+      <button class="down" data-key="ArrowDown">▼</button>
+    </div>
+    <button id="attack">ATTACK</button>
+    <button id="chipBtn">CHIP</button>
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById("game"),ctx=canvas.getContext("2d");
+const COLS=6, ROWS=3;
+// カスタム画面へ入るボタン。ここを書き換えれば好きなキーに変更できます。
+const CUSTOM_KEY = "c";
+const CHIP_KEY = "x";
+const CUSTOM_MAX = 100;
+const CUSTOM_CHARGE_PER_SEC = 12;
+const field={x:90,y:130,w:780,h:270};
+const cellW=field.w/COLS, cellH=field.h/ROWS;
+let keys={}, last=0, projectiles=[], particles=[], state, battleLevel=1, gameStarted=false;
+
+const CHIP_DATA = [
+  {name:"SHOT", code:"A", desc:"前方へ14ダメージ", type:0},
+  {name:"SWORD", code:"B", desc:"前方の敵に35ダメージ", type:1},
+  {name:"BOMB", code:"B", desc:"全敵に20ダメージ", type:2},
+  {name:"ICE", code:"C", desc:"敵を2秒停止", type:3},
+  {name:"HEAL", code:"*", desc:"HPを30回復", type:4}
+];
+
+function randomChipHand(){
+  const hand=[];
+  for(let i=0;i<5;i++) hand.push(Math.floor(Math.random()*CHIP_DATA.length));
+  return hand;
+}
+function chipCodeMatches(a,b){
+  return a==="*" || a===b;
+}
+// 選択済みチップ列の中で * は直前のコードを引き継ぐ。
+// 重要：選択中の * 自身を参照して再帰しないよう、位置(pos)で解決する。
+function effectiveSelectedCode(pos){
+  const handIndex=state.selectedChips[pos];
+  const code=CHIP_DATA[state.chipHand[handIndex]].code;
+  if(code!=="*") return code;
+  if(pos<=0) return "*";
+  return effectiveSelectedCode(pos-1);
+}
+function effectiveChipCodeAt(handIndex){
+  const pos=state.selectedChips.indexOf(handIndex);
+  if(pos>=0) return effectiveSelectedCode(pos);
+  const code=CHIP_DATA[state.chipHand[handIndex]].code;
+  return code;
+}
+function renderChipHand(){
+  const box=document.getElementById("chipChoices");
+  box.innerHTML="";
+  state.chipHand.forEach((chipIndex,i)=>{
+    const chip=CHIP_DATA[chipIndex];
+    const b=document.createElement("button");
+    b.className="chip";
+    b.innerHTML=`<b>${i+1}　${chip.name} <small>[${chip.code}]</small></b><span>${chip.desc}</span>`;
+    b.addEventListener("click",()=>chooseChip(i));
+    box.appendChild(b);
+  });
+  refreshChipSelection();
+}
+function refreshChipSelection(){
+  document.querySelectorAll("#chipChoices .chip").forEach((b,i)=>{
+    b.classList.toggle("selected", state.selectedChips.includes(i));
+    const already=state.selectedChips.includes(i);
+    const first=state.selectedChips.length===0;
+    const lastIndex=state.selectedChips[state.selectedChips.length-1];
+    const lastPos=state.selectedChips.length-1;
+    const lastCode=first?null:effectiveSelectedCode(lastPos);
+    const code=CHIP_DATA[state.chipHand[i]].code;
+    // 先頭は何でも選択可能。2枚目以降は * も選択可能で、
+    // * を選んだ後も「* が無かった場合」と同じ直前コード条件を維持する。
+    const selectable=already || (state.selectedChips.length<3 && (first || code==="*" || chipCodeMatches(lastCode,code)));
+    b.disabled=!selectable;
+  });
+  const names=state.selectedChips.map(i=>{
+    const c=CHIP_DATA[state.chipHand[i]];
+    return `${c.name}[${c.code}]`;
+  });
+  document.getElementById("selectedText").textContent =
+    "選択中：" + (names.length ? names.join(" / ") : "なし");
+}
+function chooseChip(handIndex){
+  if(!state.customMode) return;
+  const pos=state.selectedChips.indexOf(handIndex);
+  if(pos>=0){
+    state.selectedChips.splice(pos,1);
+    refreshChipSelection();
+    return;
+  }
+  if(state.selectedChips.length>=3) return;
+  if(state.selectedChips.length>0){
+    const lastPos=state.selectedChips.length-1;
+    const lastCode=effectiveSelectedCode(lastPos);
+    const code=CHIP_DATA[state.chipHand[handIndex]].code;
+    // * は直前コードを引き継ぐので、直前コードとの組み合わせを壊さない。
+    if(code!=="*" && !chipCodeMatches(lastCode,code)) return;
+  }
+  state.selectedChips.push(handIndex);
+  refreshChipSelection();
+}
+function leaveCustom(){
+  if(!state.customMode || state.selectedChips.length===0) return;
+  state.customMode=false;
+  state.customGauge=0;
+  state.activeChip=0;
+  const panel=document.getElementById("customPanel");
+  if(panel) panel.style.display="none";
+  refreshChipSelection();
+}
+function useChip(slot=0){
+  if(state.over || state.customMode || !state.selectedChips.length) return;
+  if(slot<0 || slot>=state.selectedChips.length) return;
+  const handIndex=state.selectedChips[slot];
+  const type=CHIP_DATA[state.chipHand[handIndex]].type;
+  const p=state.player;
+  state.activeChip=slot;
+
+  if(type===0){
+    projectiles.push({c:p.c+0.5,r:p.r,dx:7,damage:14,owner:"p",radius:7});
+  }else if(type===1){
+    let target=state.enemies.filter(e=>e.hp>0&&e.r===p.r&&e.c>p.c).sort((a,b)=>a.c-b.c)[0];
+    if(target){target.hp-=35;target.flash=.12;burst((target.c+.5)*cellW+field.x,(target.r+.5)*cellH+field.y,18)}
+  }else if(type===2){
+    for(const e of state.enemies){
+      if(e.hp>0){e.hp-=20;e.flash=.12;burst((e.c+.5)*cellW+field.x,(e.r+.5)*cellH+field.y,10)}
+    }
+  }else if(type===3){
+    state.frozenTimer=2;
+    burst((p.c+.5)*cellW+field.x,(p.r+.5)*cellH+field.y,12);
+  }else if(type===4){
+    p.hp=Math.min(p.max,p.hp+30);
+    burst((p.c+.5)*cellW+field.x,(p.r+.5)*cellH+field.y,10);
+  }
+
+  // チップは使用した瞬間に消費。残ったチップは選択順を保ったまま前詰めする。
+  state.selectedChips.splice(slot,1);
+  state.activeChip=0;
+  refreshChipSelection();
+}
+
+
+function reset(){
+  const lv=battleLevel;
+  state={
+    player:{c:0,r:1,hp:100,max:100,moveCD:0,attackCD:0,flash:0},
+    enemies:[
+      {c:5,r:0,hp:60+lv*10,max:60+lv*10,moveCD:Math.max(.18,.4-lv*.025),shotCD:Math.max(.55,1.2-lv*.05),flash:0,name:"MET1",verticalOnly:true,damage:10+lv*1},
+      {c:4,r:2,hp:60+lv*10,max:60+lv*10,moveCD:Math.max(.25,.8-lv*.035),shotCD:Math.max(.7,1.8-lv*.07),flash:0,name:"VIRUS",verticalOnly:false,damage:8+lv*1}
+    ],
+    time:0, over:false, message:"", victoryHandled:false,
+    customGauge:0,
+    customMode:false,
+    selectedChips:[],
+    chipHand:randomChipHand(),
+    activeChip:0,
+    frozenTimer:0
+  };
+  projectiles=[];particles=[];
+  document.getElementById("customPanel").style.display="none";
+}
+reset();
+
+function startGame(){
+  if(gameStarted) return;
+  gameStarted=true;
+  reset();
+  const ts=document.getElementById("titleScreen");
+  if(ts) ts.style.display="none";
+}
+
+addEventListener("keydown",e=>{
+  if(!gameStarted && (e.key==="Enter" || e.key===" " || e.key.toLowerCase()==="z")){
+    e.preventDefault();
+    startGame();
+    return;
+  }
+  keys[e.key.toLowerCase()]=true;
+  if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault();
+  if(e.key.toLowerCase()==="r") reset();
+
+  if(e.key.toLowerCase()===CUSTOM_KEY && state.customGauge>=CUSTOM_MAX && !state.customMode && !state.over){
+    state.customMode=true;
+    state.selectedChips=[];
+    state.chipHand=randomChipHand();
+    document.getElementById("customPanel").style.display="flex";
+    renderChipHand();
+  } else if(e.key==="Enter" && state.customMode){
+    e.preventDefault();
+    leaveCustom();
+  } else if(state.customMode && /^[1-5]$/.test(e.key)){
+    e.preventDefault();
+    chooseChip(Number(e.key)-1);
+  } else if(!state.customMode && e.key.toLowerCase()===CHIP_KEY){
+    e.preventDefault();
+    useChip(0);
+  }
+});
+addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+
+function pressKey(k){
+  keys[k.toLowerCase()]=true;
+  setTimeout(()=>keys[k.toLowerCase()]=false,90);
+}
+document.querySelectorAll("[data-key]").forEach(b=>{
+  b.addEventListener("pointerdown",()=>pressKey(b.dataset.key));
+});
+document.getElementById("attack").addEventListener("pointerdown",()=>pressKey(" "));
+document.getElementById("chipBtn").addEventListener("pointerdown",()=>useChip(0));
+document.getElementById("startButton").addEventListener("click",startGame);
+
+
+function occupied(c,r,except){
+  if(state.player.c===c&&state.player.r===r&&except!=="player") return true;
+  return state.enemies.some(e=>e!==except&&e.hp>0&&e.c===c&&e.r===r);
+}
+function movePlayer(dc,dr){
+  const p=state.player, nc=p.c+dc,nr=p.r+dr;
+  if(nc<0||nc>=3||nr<0||nr>=ROWS||occupied(nc,nr,"player")) return;
+  p.c=nc;p.r=nr;
+}
+function attack(){
+  const p=state.player;
+  if(p.attackCD>0||state.over)return;
+  p.attackCD=.42;
+  // 敵が目の前にいても必ず弾を発射する。
+  projectiles.push({c:p.c+0.5,r:p.r,dx:7,damage:14,owner:"p",radius:7});
+  burst(field.x+(p.c+0.75)*cellW,field.y+(p.r+0.5)*cellH,4);
+}
+function enemyShoot(e){
+  const p=state.player;
+  // VIRUS は自機の位置に関係なく、一定間隔で現在の列から左へ攻撃する。
+  if(e.name==="VIRUS"){
+    projectiles.push({c:e.c-.35,r:e.r,y:0,dx:-3.5,damage:e.damage||10,owner:"e",radius:7});
+    return;
+  }
+  if(e.c<=p.c && e.r!==p.r) return;
+  if(e.r===p.r){
+    projectiles.push({c:e.c-.35,r:e.r,y:0,dx:-3.5,damage:e.damage||10,owner:"e",radius:7});
+  } else if(Math.random()<.35){
+    // diagonal-ish telegraph projectile: visual line to player's row
+    projectiles.push({c:e.c-.25,r:e.r,y:0,dx:-3,damage:(e.damage||8)*.8,owner:"e",radius:7});
+  }
+}
+function update(dt){
+  if(!gameStarted) return;
+  if(state.over)return;
+  if(state.customMode)return;
+  state.time+=dt;
+  state.customGauge=Math.min(CUSTOM_MAX,state.customGauge+CUSTOM_CHARGE_PER_SEC*dt);
+  const p=state.player;
+  p.moveCD-=dt;p.attackCD-=dt;p.flash-=dt;
+  state.enemies.forEach(e=>{e.moveCD-=dt;e.shotCD-=dt;e.flash-=dt});
+  if(state.frozenTimer>0) state.frozenTimer-=dt;
+
+  if(p.moveCD<=0){
+    let dc=0,dr=0;
+    if(keys["arrowup"]||keys["w"]) dr=-1;
+    else if(keys["arrowdown"]||keys["s"]) dr=1;
+    else if(keys["arrowleft"]||keys["a"]) dc=-1;
+    else if(keys["arrowright"]||keys["d"]) dc=1;
+    if(dc||dr){movePlayer(dc,dr);p.moveCD=.12}
+  }
+  if(keys[" "]||keys["space"]) attack();
+
+  for(const e of state.enemies){
+    if(e.hp<=0) continue;
+    if(state.frozenTimer<=0 && e.moveCD<=0){
+      // MET1 は縦方向にしか動かない。列(c)は固定し、行(r)だけ変える。
+      let nc=e.c,nr=e.r;
+      if(e.verticalOnly){
+        const dr=Math.sign(p.r-e.r);
+        if(dr!==0) nr+=dr;
+        if(nr>=0&&nr<ROWS&&!occupied(nc,nr,e)) e.r=nr;
+      }else if(e.name==="VIRUS"){
+        // VIRUS は自機の位置を追わず、敵側3×3の中をランダムに自由移動。
+        // 移動先に別の敵がいる場合は移動しない。
+        const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+        const shuffled=dirs.sort(()=>Math.random()-.5);
+        for(const [dc,dr] of shuffled){
+          nc=e.c+dc; nr=e.r+dr;
+          if(nc>=3 && nc<COLS && nr>=0 && nr<ROWS &&
+             !state.enemies.some(other=>other!==e&&other.hp>0&&other.c===nc&&other.r===nr)){
+            e.c=nc; e.r=nr;
+            break;
+          }
+        }
+      }else{
+        // その他の敵は従来どおり、列と行の両方を移動。
+        let dc=Math.sign(p.c-e.c),dr=Math.sign(p.r-e.r);
+        if(Math.random()<.55 && dr!==0) nr+=dr; else if(dc!==0) nc+=dc;
+        if(nc>=3 && nc<COLS && nr>=0&&nr<ROWS && !occupied(nc,nr,e)){e.c=nc;e.r=nr}
+      }
+      e.moveCD=Math.max(.18,(.45+Math.random()*.45)-battleLevel*.025);
+    }
+    if(state.frozenTimer<=0 && e.shotCD<=0){enemyShoot(e);e.shotCD=Math.max(.5,(1.1+Math.random()*1.2)-battleLevel*.06)}
+  }
+
+  for(const q of projectiles){
+    const oldC=q.c;
+    q.c+=q.dx*dt;
+    if(q.c<0||q.c>COLS) q.dead=true;
+
+    if(q.owner==="p"){
+      for(const e of state.enemies) if(e.hp>0 && e.r===Math.round(q.r) && !q.dead){
+        const enemyCenter=e.c+0.5;
+        const crossed=(oldC<=enemyCenter && q.c>=enemyCenter) ||
+                      Math.abs(q.c-enemyCenter)<0.22;
+        if(crossed){
+          e.hp-=q.damage;e.flash=.12;q.dead=true;
+          burst((e.c+.5)*cellW+field.x,(e.r+.5)*cellH+field.y,8);
+          break;
+        }
+      }
+    }else{
+      const playerCenter=p.c+0.5;
+      const crossed=(oldC>=playerCenter && q.c<=playerCenter) ||
+                    Math.abs(q.c-playerCenter)<0.22;
+      if(q.r===p.r && crossed){
+        p.hp-=q.damage;p.flash=.1;q.dead=true;
+        burst((p.c+.5)*cellW+field.x,(p.r+.5)*cellH+field.y,8);
+      }
+    }
+  }
+  projectiles=projectiles.filter(q=>!q.dead);
+  particles.forEach(x=>{x.life-=dt;x.x+=x.vx*dt;x.y+=x.vy*dt});
+  particles=particles.filter(x=>x.life>0);
+
+  if(p.hp<=0){p.hp=0;state.over=true;state.message="DEFEAT";}
+  else if(state.enemies.every(e=>e.hp<=0)){
+    state.over=true;state.message=`VICTORY  /  BATTLE ${battleLevel}`;
+    if(!state.victoryHandled){ battleLevel++; state.victoryHandled=true; }
+  }
+}
+function burst(x,y,n){
+  for(let i=0;i<n;i++){
+    const a=Math.random()*Math.PI*2,s=50+Math.random()*120;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.35+Math.random()*.25});
+  }
+}
+function rr(x,y,w,h,r){
+  ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();
+}
+function draw(){
+  if(!gameStarted){drawTitleScreen();return;}
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle="#0d0f14";ctx.fillRect(0,0,960,540);
+
+  // HUD
+  ctx.fillStyle="#e8ebf2";ctx.font="700 20px system-ui";ctx.fillText("BATTLE FIELD",90,55);
+  ctx.font="15px system-ui";ctx.fillStyle="#9da5b8";ctx.fillText(`REALTIME  /  BATTLE ${battleLevel}`,90,78);
+
+  // HP
+  ctx.fillStyle="#252a34";rr(90,88,250,18,8);
+  ctx.fillStyle="#eee";rr(90,88,250*(state.player.hp/state.player.max),18,8);
+  ctx.fillStyle="#fff";ctx.font="bold 14px system-ui";ctx.fillText(`HP ${state.player.hp} / ${state.player.max}`,350,103);
+
+  // Custom gauge
+  ctx.fillStyle="#252a34";rr(610,88,260,18,8);
+  ctx.fillStyle=state.customGauge>=CUSTOM_MAX?"#f1f1f1":"#8c96aa";
+  rr(610,88,260*(state.customGauge/CUSTOM_MAX),18,8);
+  ctx.fillStyle="#fff";ctx.font="bold 14px system-ui";
+  ctx.fillText(`CUSTOM ${Math.floor(state.customGauge)}%`,610,80);
+  if(state.customGauge>=CUSTOM_MAX){
+    ctx.fillStyle="#fff";ctx.font="bold 12px system-ui";
+    ctx.fillText(`PRESS ${CUSTOM_KEY.toUpperCase()}`,745,122);
+  }
+
+  // field background
+  ctx.fillStyle="#202531";rr(field.x-3,field.y-3,field.w+6,field.h+6,8);
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    ctx.fillStyle=c<3?"#1b2630":"#2a2028";
+    ctx.fillRect(field.x+c*cellW,field.y+r*cellH,cellW-1,cellH-1);
+  }
+  // 攻撃の球が現在実際に通過している1マスだけを明るく表示
+  if(!state.customMode && !state.over){
+    for(const q of projectiles){
+      const c=Math.floor(q.c), r=Math.floor(q.r);
+      if(c>=0 && c<COLS && r>=0 && r<ROWS){
+        ctx.fillStyle=q.owner==="p" ? "rgba(255,255,255,.24)" : "rgba(255,100,120,.24)";
+        ctx.fillRect(field.x+c*cellW+1,field.y+r*cellH+1,cellW-3,cellH-3);
+        ctx.strokeStyle=q.owner==="p" ? "rgba(255,255,255,.62)" : "rgba(255,120,140,.62)";
+        ctx.lineWidth=2;
+        ctx.strokeRect(field.x+c*cellW+2,field.y+r*cellH+2,cellW-5,cellH-5);
+      }
+    }
+  }
+
+  // center line
+  ctx.fillStyle="#667084";ctx.fillRect(field.x+3*cellW-2,field.y,4,field.h);
+
+  // subtle grid highlights
+  ctx.strokeStyle="#41495a";ctx.lineWidth=1;
+  for(let c=0;c<=COLS;c++){ctx.beginPath();ctx.moveTo(field.x+c*cellW,field.y);ctx.lineTo(field.x+c*cellW,field.y+field.h);ctx.stroke()}
+  for(let r=0;r<=ROWS;r++){ctx.beginPath();ctx.moveTo(field.x,field.y+r*cellH);ctx.lineTo(field.x+field.w,field.y+r*cellH);ctx.stroke()}
+
+  // projectiles
+  for(const q of projectiles){
+    const x=field.x+q.c*cellW,y=field.y+(q.r+.5)*cellH;
+    ctx.fillStyle=q.owner==="p"?"#f4f4f4":"#ff667a";
+    ctx.beginPath();ctx.arc(x,y,q.radius||7,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="#ffffff55";ctx.fillRect(x-22,y-2,18,4);
+  }
+
+  // player
+  drawUnit(state.player,"P",true);
+  state.enemies.forEach((e,i)=>{if(e.hp>0)drawUnit(e,e.name||("V"+(i+1)),false)});
+
+  // particles
+  for(const x of particles){ctx.globalAlpha=Math.max(0,x.life*2);ctx.fillStyle="#fff";ctx.fillRect(x.x,x.y,4,4)}ctx.globalAlpha=1;
+
+  // bottom info
+  ctx.fillStyle="#171b24";rr(90,425,780,70,10);
+  ctx.fillStyle="#9da5b8";ctx.font="13px system-ui";ctx.fillText("MOVE",110,452);
+  ctx.fillStyle="#e8ebf2";ctx.font="bold 16px system-ui";ctx.fillText("WASD / ARROWS",110,476);
+  ctx.fillStyle="#9da5b8";ctx.font="13px system-ui";ctx.fillText("ATTACK",330,452);
+  ctx.fillStyle="#e8ebf2";ctx.font="bold 16px system-ui";ctx.fillText("SPACE",330,476);
+  ctx.fillStyle="#9da5b8";ctx.font="13px system-ui";ctx.fillText("ENEMIES",540,452);
+  ctx.fillStyle="#e8ebf2";ctx.font="bold 16px system-ui";ctx.fillText(state.enemies.filter(e=>e.hp>0).length+" REMAIN",540,476);
+  ctx.fillStyle="#9da5b8";ctx.font="13px system-ui";ctx.fillText("REMAINING CHIPS",700,452);
+  ctx.fillStyle="#e8ebf2";ctx.font="bold 13px system-ui";
+  const remain=state.selectedChips.map((i,n)=>{const c=CHIP_DATA[state.chipHand[i]];return `${n===0?"▶ ":""}${c.name}[${c.code}]`;}).join("  ");
+  ctx.fillText(remain || "NONE",700,476);
+  ctx.fillStyle="#9da5b8";ctx.font="11px system-ui";
+  ctx.fillText(`X / CHIP：${state.selectedChips.length ? CHIP_DATA[state.chipHand[state.selectedChips[0]]].name+" を使用" : "使用できるチップなし"}`,700,493);
+
+  if(state.over){
+    ctx.fillStyle="#000b";ctx.fillRect(0,0,960,540);
+    ctx.fillStyle="#fff";ctx.font="900 54px system-ui";ctx.textAlign="center";ctx.fillText(state.message,480,255);
+    ctx.font="18px system-ui";ctx.fillText(`R で次のバトルへ　(BATTLE ${battleLevel})`,480,292);ctx.textAlign="left";
+  }
+}
+function drawUnit(u,label,isPlayer){
+  const x=field.x+u.c*cellW+cellW/2,y=field.y+u.r*cellH+cellH/2;
+  ctx.save();
+  if(u.flash>0)ctx.globalAlpha=.55;
+  ctx.fillStyle=isPlayer?"#d9e2ef":"#d96c7a";
+  rr(x-27,y-27,54,54,10);
+  ctx.fillStyle=isPlayer?"#263242":"#3a2026";
+  rr(x-18,y-16,36,24,6);
+  ctx.fillStyle="#fff";ctx.font="bold 12px system-ui";ctx.textAlign="center";ctx.fillText(label,x,y+4);ctx.textAlign="left";
+  ctx.restore();
+
+  // HPをユニットの直下に表示
+  const hpText=`HP ${Math.max(0,Math.ceil(u.hp))} / ${u.max}`;
+  ctx.textAlign="center";
+  ctx.font="bold 11px system-ui";
+  ctx.fillStyle="#ffffff";
+  ctx.fillText(hpText,x,y+43);
+  ctx.fillStyle="#151922";
+  rr(x-30,y+49,60,6,3);
+  ctx.fillStyle=isPlayer?"#d9e2ef":"#eee";
+  rr(x-30,y+49,60*Math.max(0,u.hp/u.max),6,3);
+  ctx.textAlign="left";
+}
+
+canvas.addEventListener("pointerdown",()=>{
+  if(!gameStarted) startGame();
+});
+document.getElementById("titleScreen").addEventListener("pointerdown",(e)=>{
+  if(!gameStarted && e.target.id!=="startButton") startGame();
+});
+
+function drawTitleScreen(){
+  // タイトル画面はDOMオーバーレイで表示
+}
+
+function loop(t){
+  const dt=Math.min(.033,(t-last)/1000||0);last=t;
+  update(dt);draw();requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
